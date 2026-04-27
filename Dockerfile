@@ -1,39 +1,39 @@
 # --- Stage 1: Builder ---
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim as builder
 
 WORKDIR /app
 
-# Install build dependencies (discarded in final stage)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a virtual environment
 RUN python -m venv /opt/venv
-# Make sure we use the venv pip
 ENV PATH="/opt/venv/bin:$PATH"
 
-# 1. Combine pip installs to prevent CUDA bloat
-# 2. Use --extra-index-url so it applies to torch requirements from transformers
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
+# 1. FORCE the CPU index exclusively for PyTorch to guarantee 0 bytes of CUDA
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# 2. Install the rest normally (it will use the Torch we just installed)
+RUN pip install --no-cache-dir \
     fastapi \
     uvicorn \
     transformers \
     numpy \
     psutil \
-    psycopg2-binary \
-    torch \
-    --extra-index-url https://download.pytorch.org/whl/cpu
+    psycopg2-binary
 
-# Clean up unneeded pycache files to shave off MBs
-RUN find /opt/venv -type d -name "__pycache__" -exec rm -r {} +
+# 3. Explicitly nuke any stray NVIDIA packages that sometimes get pulled as dependencies
+RUN pip freeze | grep nvidia | xargs -r pip uninstall -y
 
-# Download and save the model explicitly to avoid symlink duplication bloat
+# 4. Save model ensuring ONLY the safetensors format is kept
 RUN python -c "from transformers import AutoTokenizer, AutoModel; \
     model_id = 'ai4bharat/IndicBERTv2-MLM-Sam-TLM'; \
     AutoTokenizer.from_pretrained(model_id).save_pretrained('/app/model'); \
-    AutoModel.from_pretrained(model_id).save_pretrained('/app/model')"
+    AutoModel.from_pretrained(model_id).save_pretrained('/app/model', safe_serialization=True)"
+
+# 5. Paranoid cleanup: delete older .bin model weights if they generated alongside safetensors
+RUN find /app/model -name "pytorch_model.bin" -type f -delete
+RUN find /opt/venv -type d -name "__pycache__" -exec rm -r {} +
 
 
 # --- Stage 2: Runtime ---
@@ -41,22 +41,15 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Copy the completely built virtual environment
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-
-# Copy the explicitly saved model (no symlinks!)
 COPY --from=builder /app/model /app/model
-
-# Copy app code
 COPY app.py .
 
-# Create non-root user and set permissions
-RUN useradd -m appuser && \
-    chown -R appuser /app
+RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
-# Force transformers to run fully offline so it doesn't attempt to download anything at runtime
+# Force fully offline mode
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
 
