@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  indicbert:
+    build: .
+    container_name: indicbert-api
+    ports:
+      - "8000:8000"
+    mem_limit: 2g          # down from 4g — ONNX uses ~900MB vs ~1.5GB torch
+    memswap_limit: 2g      # disable swap — prevent slow disk thrashing
+    cpus: "2.0"            # hard cap at OS level — 2 of 4 cores
+    environment:
+      - CPU_USAGE_CAP=0.5
+      - MAX_BATCH_SIZE=64
+      - TEXT_PREVIEW=500
+      - MAX_LENGTH=512
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s    # ONNX loads faster than torch — 30s is enough
