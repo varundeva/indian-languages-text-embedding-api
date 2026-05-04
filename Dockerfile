@@ -22,26 +22,15 @@ RUN pip install --no-cache-dir \
     onnx \
     onnxruntime
 
+# Copy conversion scripts (avoids Coolify ARG injection into heredocs)
+COPY scripts/export_model.py /build/export_model.py
+COPY scripts/quantize_model.py /build/quantize_model.py
+
 # Download + convert IndicBERT v2 → ONNX
-RUN python - <<'PY'
-from optimum.onnxruntime import ORTModelForFeatureExtraction
-from transformers import AutoTokenizer
-model_id = 'ai4bharat/IndicBERTv2-MLM-Sam-TLM'
-model = ORTModelForFeatureExtraction.from_pretrained(model_id, export=True)
-model.save_pretrained('/build/model')
-AutoTokenizer.from_pretrained(model_id).save_pretrained('/build/model')
-print('ONNX export complete')
-PY
+RUN python /build/export_model.py
 
 # Quantize ONNX to INT8 — cuts model size ~50% with minimal accuracy loss
-RUN python - <<'PY'
-from onnxruntime.quantization import quantize_dynamic, QuantType
-import os
-src = '/build/model/model.onnx'
-dst = '/build/model/model_q.onnx'
-os.path.exists(src) and (quantize_dynamic(src, dst, weight_type=QuantType.QInt8), os.replace(dst, src))
-print('Quantization complete')
-PY
+RUN python /build/quantize_model.py
 
 # Remove any leftover binary weights
 RUN find /build/model -name "*.bin" -delete \
