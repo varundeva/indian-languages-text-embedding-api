@@ -24,6 +24,7 @@ logger = logging.getLogger("indicbert-api")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MODEL_DIR       = os.getenv("MODEL_DIR", "/app/model")
+MODEL_NAME      = os.getenv("MODEL_NAME", "ai4bharat/IndicBERTv2-MLM-Sam-TLM")
 MAX_LENGTH      = int(os.getenv("MAX_LENGTH", "512"))
 MAX_BATCH_SIZE  = int(os.getenv("MAX_BATCH_SIZE", "64"))
 TEXT_PREVIEW    = int(os.getenv("TEXT_PREVIEW", "500"))
@@ -63,7 +64,7 @@ state = ModelState()
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info(f"Loading model from: {MODEL_DIR}")
+    logger.info(f"Loading model from: {MODEL_DIR} (name: {MODEL_NAME})")
     logger.info(f"RAM available: {psutil.virtual_memory().available / 1e9:.1f} GB")
 
     # ONNX session options — apply CPU cap here
@@ -233,6 +234,7 @@ def health():
     proc_ram = psutil.Process().memory_info().rss / 1e9
     return {
         "status":            "ok" if state.ready else "loading",
+        "model_name":        MODEL_NAME,
         "model_dir":         MODEL_DIR,
         "runtime":           "onnxruntime",
         "threads_used":      allowed_threads,
@@ -266,7 +268,7 @@ def embed_single(req: EmbedRequest):
             embedding=vectors[0].tolist(),
             dimensions=int(vectors.shape[1]),
             language=req.language,
-            model=MODEL_DIR,
+            model=MODEL_NAME,
         )
     except Exception as e:
         logger.error(f"embed_single error: {e}", exc_info=True)
@@ -285,7 +287,7 @@ def embed_batch(req: BatchEmbedRequest):
             embeddings=vectors.tolist(),
             count=int(vectors.shape[0]),
             dimensions=int(vectors.shape[1]),
-            model=MODEL_DIR,
+            model=MODEL_NAME,
         )
     except Exception as e:
         logger.error(f"embed_batch error: {e}", exc_info=True)
